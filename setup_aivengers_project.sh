@@ -18,6 +18,10 @@ pip install --upgrade pip
 echo "📥 Installing required Python packages..."
 pip install streamlit pandas plotly matplotlib langchain pymysql psycopg2-binary openai
 
+# Step 3.1: Install additional database drivers
+echo "🗄️ Installing additional database drivers..."
+pip install pymongo sqlite3
+
 # Optional: FastAPI if needed
 read -p "❓ Do you want to install FastAPI? (y/n): " install_fastapi
 if [[ "$install_fastapi" == "y" ]]; then
