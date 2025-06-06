@@ -1,0 +1,16 @@
+{
+    "alice": {
+      "password": "password123",
+      "queries": [
+        {
+          "query": "What is the total revenue from sales?",
+          "response": "The total revenue is $1,200,000."
+        }
+      ]
+    },
+    "bob": {
+      "password": "secure456",
+      "queries": []
+    }
+  }
+  
