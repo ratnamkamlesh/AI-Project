@@ -68,6 +68,7 @@ A powerful Streamlit-based data assistant application that uses Large Language M
 
 ### First Time Setup
 1. **Register a new account** or **login** with existing credentials
+   - **Demo Credentials**: You can use `alice` / `password123` for testing
 2. **Choose your data source**:
    - **Upload File**: Select CSV or Excel files from your computer
    - **Database**: Connect to your MySQL/PostgreSQL database
