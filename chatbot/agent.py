@@ -63,43 +63,83 @@ def create_agent_for_dataframe_sheets(sheets_dfs: dict, question: Optional[str] 
 
     if question:
         try:
-            # Optimize the prompt for faster processing
+            # Check if this is a filtering question
+            is_filtering_question = any(term in question.lower() for term in ['list', 'show', 'find', 'filter', 'where', 'which'])
+            
+            if is_filtering_question:
+                # Direct DataFrame manipulation for filtering operations
+                try:
+                    if 'company_type' in combined_df.columns and 'private' in question.lower():
+                        filtered_df = combined_df[combined_df['company_type'].str.lower() == 'private']
+                        total_count = len(filtered_df)
+                        result_list = filtered_df['company_name'].tolist() if 'company_name' in filtered_df.columns else filtered_df.index.tolist()
+                        
+                        response_text = f"Total private companies found: {total_count}\n\n"
+                        response_text += "Companies:\n"
+                        for idx, company in enumerate(result_list, 1):
+                            response_text += f"{idx}. {company}\n"
+                        
+                        return response_text
+                except Exception as e:
+                    print(f"Direct filtering failed: {str(e)}")
+                    # Fall back to LLM approach
+            
+            # Enhanced prompt for better response structure
             structured_prompt = (
-                "Be concise. "
-                "Use only necessary calculations. "
-                "Question: " + question
+                "Follow these instructions carefully:\n"
+                "1. If filtering data, show ALL matching records, not just a few\n"
+                "2. Always include the total count of matching records\n"
+                "3. Format the output as a numbered list\n"
+                "4. Include all relevant columns in the output\n"
+                "Question: " + question + "\n"
+                "Note: If the result contains multiple records, show ALL of them, not just a sample."
             )
             
             response = agent.invoke(
                 {"input": structured_prompt},
                 handle_parsing_errors=True,
-                config={"max_tokens": 500}  # Limit response length
+                config={"max_tokens": 2000}  # Increased token limit for longer responses
             )
             
             output = response.get("output", "No output found")
             
-            # Clean up the output
+            # Process and structure the output
             if isinstance(output, str):
                 output = output.replace('```', '').replace('`', '').strip()
-
-            # Only generate plots if explicitly requested
-            if any(x in question.lower() for x in ["plot", "chart", "graph", "visualize"]):
-                try:
-                    fig, ax = plt.subplots(figsize=(8, 4))  # Smaller figure size
-                    combined_df.plot(ax=ax)
-                    plot_base64 = plot_to_base64(fig)
-                    plt.close(fig)  # Clean up memory
-                    return {
-                        "output": output,
-                        "plot_base64": plot_base64
-                    }
-                except Exception as e:
-                    return {
-                        "output": output,
-                        "plot_error": str(e)
-                    }
+                
+                # Handle JSON responses
+                if output.startswith('{') or output.startswith('['):
+                    try:
+                        import ast
+                        import json
+                        
+                        # Try both ast.literal_eval and json.loads
+                        try:
+                            evaluated_output = ast.literal_eval(output)
+                        except:
+                            evaluated_output = json.loads(output)
+                            
+                        if isinstance(evaluated_output, dict):
+                            if 'answer' in evaluated_output and isinstance(evaluated_output['answer'], list):
+                                items = evaluated_output['answer']
+                                total_count = len(items)
+                                formatted_output = f"Total items found: {total_count}\n\n"
+                                for idx, item in enumerate(items, 1):
+                                    formatted_output += f"{idx}. {item}\n"
+                                output = formatted_output
+                            else:
+                                output = "\n".join([f"{k}: {v}" for k, v in evaluated_output.items()])
+                        elif isinstance(evaluated_output, list):
+                            total_count = len(evaluated_output)
+                            formatted_output = f"Total items found: {total_count}\n\n"
+                            for idx, item in enumerate(evaluated_output, 1):
+                                formatted_output += f"{idx}. {item}\n"
+                            output = formatted_output
+                    except Exception as e:
+                        print(f"Error processing structured output: {str(e)}")
 
             return output
+            
         except Exception as e:
             error_msg = str(e)
             if "parsing" in error_msg.lower():
