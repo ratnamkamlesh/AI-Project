@@ -7,6 +7,8 @@ from data.file_handler import load_file_data, suggest_questions  # You create th
 from db.db_connector import DatabaseConnector  # Updated import
 from chatbot.agent import create_agent_for_dataframe_sheets, rephrase_prompts  # You create this
 import logging
+import pandas as pd
+
 try:
     # Session state for login
     if "logged_in" not in st.session_state:
@@ -183,28 +185,73 @@ try:
                             )
                             
                             # Load selected tables
+                            dataframes = []  # Initialize dataframes list here
                             for table in selected_tables:
                                 with st.spinner(f"Loading {table}..."):
                                     try:
-                                        df = connector.fetch_data(table, selected_db)
+                                        # Fetch data with limit
+                                        df = connector.fetch_data(table, selected_db, limit=1000)
+                                        
+                                        # Debug information
+                                        st.write(f"### 🧮 Table: {table}")
+                                        st.write("Debug Info:")
+                                        st.write(f"- DataFrame type: {type(df)}")
+                                        st.write(f"- Is DataFrame empty: {df.empty}")
                                         if not df.empty:
-                                            st.write(f"### 🧮 Table: {table}")
-                                            st.dataframe(df.head(100))  # Show first 100 rows
-                                            st.info(f"📊 Shape: {df.shape[0]} rows × {df.shape[1]} columns")
+                                            st.write(f"- Number of rows: {len(df)}")
+                                            st.write(f"- Number of columns: {len(df.columns)}")
+                                            st.write("- Columns:", df.columns.tolist())
+                                        
+                                        if not isinstance(df, pd.DataFrame):
+                                            st.error(f"Error: Expected pandas DataFrame but got {type(df)}")
+                                            continue
                                             
-                                            # Generate summary
-                                            if st.checkbox(f"🔍 Generate summary for {table}?", key=f"db_summary_{table}"):
-                                                summary = create_agent_for_dataframe_sheets([(table, df, [])], "Give a short summary of this dataset.")
-                                                st.info(f"🧠 **Analysis of {table}**:\n\n{summary}")
+                                        if df.empty:
+                                            st.warning(f"Table {table} is empty")
+                                            continue
                                             
-                                            # Generate suggested questions
-                                            suggested_questions_df = suggest_questions(df)
-                                            suggested_questions_df = rephrase_prompts(suggested_questions_df)
-                                            dataframes.append((table, df, suggested_questions_df))
-                                        else:
-                                            st.warning(f"Table {table} is empty or could not be loaded")
+                                        # Remove any duplicate columns that might have been added
+                                        df = df.loc[:, ~df.columns.duplicated()]
+                                        
+                                        # Display the first few rows of raw data
+                                        # st.write("Preview of raw data:")
+                                        # st.write(df.head().to_dict())
+                                        
+                                        # Display the dataframe
+                                        st.write("Full data table:")
+                                        st.dataframe(df)
+                                        st.info(f"📊 Shape: {df.shape[0]} rows × {df.shape[1]} columns")
+                                        
+                                        # Display column information
+                                        with st.expander("📋 Column Information"):
+                                            st.write("Columns in this table:")
+                                            for col in df.columns:
+                                                st.write(f"- {col} ({df[col].dtype})")
+                                                # Show a sample of non-null values
+                                                non_null_values = df[col].dropna().head(3).tolist()
+                                                if non_null_values:
+                                                    st.write(f"  Sample values: {non_null_values}")
+                                        
+                                        # Generate summary
+                                        if st.checkbox(f"🔍 Generate summary for {table}?", key=f"db_summary_{table}"):
+                                            summary = create_agent_for_dataframe_sheets([(table, df, [])], "Give a short summary of this dataset.")
+                                            st.info(f"🧠 **Analysis of {table}**:\n\n{summary}")
+                                        
+                                        # Generate suggested questions
+                                        suggested_questions_df = suggest_questions(df)
+                                        suggested_questions_df = rephrase_prompts(suggested_questions_df)
+                                        dataframes.append((table, df, suggested_questions_df))
                                     except Exception as e:
                                         st.error(f"Error loading table {table}: {str(e)}")
+                                        st.error("Detailed error: " + str(traceback.format_exc()))
+                                        # Try to get more information about the error
+                                        if 'df' in locals():
+                                            st.write("Debug information about the DataFrame:")
+                                            st.write(f"DataFrame type: {type(df)}")
+                                            if hasattr(df, 'shape'):
+                                                st.write(f"DataFrame shape: {df.shape}")
+                                            if hasattr(df, 'columns'):
+                                                st.write(f"DataFrame columns: {list(df.columns)}")
                         else:
                             st.warning("No tables found in the selected database")
                 else:
@@ -228,6 +275,7 @@ try:
                         df = st.session_state.db_connector.fetch_data(custom_query, selected_db if 'selected_db' in locals() else None)
                         if not df.empty:
                             st.success("Query executed successfully!")
+
                             st.dataframe(df)
                             st.info(f"📊 Result: {df.shape[0]} rows × {df.shape[1]} columns")
                             

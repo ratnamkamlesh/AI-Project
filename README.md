@@ -47,7 +47,7 @@ A powerful Streamlit-based data assistant application that uses Large Language M
 
 3. **Install required packages**:
    ```bash
-   pip install streamlit pandas plotly matplotlib langchain pymysql psycopg2-binary openai
+   pip install streamlit pandas plotly matplotlib langchain pymysql psycopg2-binary openai tabulate
    ```
 
 ## 🏃‍♂️ How to Run
@@ -153,3 +153,5 @@ This project is part of the AIvengers Hackathon initiative.
 ---
 
 **Happy Data Analyzing! 🎉**
+
+`

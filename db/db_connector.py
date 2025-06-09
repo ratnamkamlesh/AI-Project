@@ -271,15 +271,47 @@ class DatabaseConnector:
             cursorclass=pymysql.cursors.DictCursor
         )
         
-        # Check if it's a query or table name
-        if any(keyword in table_or_query.upper() for keyword in ['SELECT', 'WITH', 'SHOW']):
-            query = table_or_query
-        else:
-            query = f"SELECT * FROM {table_or_query} LIMIT {limit}"
-        
-        df = pd.read_sql(query, conn)
-        conn.close()
-        return df
+        try:
+            # Check if it's a query or table name
+            if any(keyword in table_or_query.upper() for keyword in ['SELECT', 'WITH', 'SHOW']):
+                query = table_or_query
+            else:
+                query = f"SELECT * FROM {table_or_query} LIMIT {limit}"
+            
+            # Use cursor to fetch data first
+            cursor = conn.cursor()
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            # Convert to DataFrame
+            if rows:
+                df = pd.DataFrame(rows)
+                
+                # Handle datetime columns
+                for col in df.columns:
+                    if 'date' in col.lower() or 'time' in col.lower() or 'created' in col.lower():
+                        try:
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                        except Exception:
+                            pass  # Keep as is if conversion fails
+                    
+                    # Ensure string columns are properly typed
+                    elif df[col].dtype == 'object':
+                        df[col] = df[col].astype(str)
+                    
+                    # Ensure numeric columns are properly typed
+                    elif df[col].dtype in ['int64', 'float64']:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+            else:
+                df = pd.DataFrame()
+            
+            return df
+        except Exception as e:
+            st.error(f"MySQL Error: {str(e)}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
 
     def _fetch_postgresql_data(self, table_or_query: str, database: str, limit: int) -> pd.DataFrame:
         conn = psycopg2.connect(
@@ -287,43 +319,125 @@ class DatabaseConnector:
             port=self.port,
             user=self.username,
             password=self.password,
-            database=database
+            database=database,
+            cursor_factory=RealDictCursor
         )
         
-        # Check if it's a query or table name
-        if any(keyword in table_or_query.upper() for keyword in ['SELECT', 'WITH', 'SHOW']):
-            query = table_or_query
-        else:
-            query = f"SELECT * FROM {table_or_query} LIMIT {limit}"
-        
-        df = pd.read_sql(query, conn)
-        conn.close()
-        return df
+        try:
+            # Check if it's a query or table name
+            if any(keyword in table_or_query.upper() for keyword in ['SELECT', 'WITH', 'SHOW']):
+                query = table_or_query
+            else:
+                query = f"SELECT * FROM {table_or_query} LIMIT {limit}"
+            
+            # Use cursor to fetch data first
+            cursor = conn.cursor()
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            # Convert to DataFrame
+            if rows:
+                df = pd.DataFrame(rows)
+                
+                # Handle datetime columns
+                for col in df.columns:
+                    if 'date' in col.lower() or 'time' in col.lower() or 'created' in col.lower():
+                        try:
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                        except Exception:
+                            pass  # Keep as is if conversion fails
+                    
+                    # Ensure string columns are properly typed
+                    elif df[col].dtype == 'object':
+                        df[col] = df[col].astype(str)
+                    
+                    # Ensure numeric columns are properly typed
+                    elif df[col].dtype in ['int64', 'float64']:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+            else:
+                df = pd.DataFrame()
+            
+            return df
+        except Exception as e:
+            st.error(f"PostgreSQL Error: {str(e)}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
 
     def _fetch_mongodb_data(self, collection: str, database: str, limit: int) -> pd.DataFrame:
-        client = pymongo.MongoClient(
-            host=self.host,
-            port=self.port,
-            username=self.username,
-            password=self.password
-        )
-        db = client[database]
-        collection_obj = db[collection]
-        documents = list(collection_obj.find().limit(limit))
-        return pd.DataFrame(documents)
+        try:
+            client = pymongo.MongoClient(
+                host=self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password
+            )
+            db = client[database]
+            collection_obj = db[collection]
+            
+            # Fetch documents and exclude MongoDB's _id field unless needed
+            documents = list(collection_obj.find({}, {'_id': 0}).limit(limit))
+            
+            # Convert to DataFrame
+            if documents:
+                df = pd.DataFrame(documents)
+            else:
+                df = pd.DataFrame()
+            
+            return df
+        except Exception as e:
+            st.error(f"MongoDB Error: {str(e)}")
+            return pd.DataFrame()
+        finally:
+            if 'client' in locals():
+                client.close()
 
     def _fetch_sqlite_data(self, table_or_query: str, limit: int) -> pd.DataFrame:
         conn = sqlite3.connect(self.host)
         
-        # Check if it's a query or table name
-        if any(keyword in table_or_query.upper() for keyword in ['SELECT', 'WITH']):
-            query = table_or_query
-        else:
-            query = f"SELECT * FROM {table_or_query} LIMIT {limit}"
-        
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
+        try:
+            # Check if it's a query or table name
+            if any(keyword in table_or_query.upper() for keyword in ['SELECT', 'WITH']):
+                query = table_or_query
+            else:
+                query = f"SELECT * FROM {table_or_query} LIMIT {limit}"
+            
+            # Use cursor to fetch data first
+            cursor = conn.cursor()
+            cursor.execute(query)
+            columns = [description[0] for description in cursor.description]
+            rows = cursor.fetchall()
+            cursor.close()
+            
+            # Convert to DataFrame with column names
+            if rows:
+                df = pd.DataFrame(rows, columns=columns)
+                
+                # Handle datetime columns
+                for col in df.columns:
+                    if 'date' in col.lower() or 'time' in col.lower() or 'created' in col.lower():
+                        try:
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                        except Exception:
+                            pass  # Keep as is if conversion fails
+                    
+                    # Ensure string columns are properly typed
+                    elif df[col].dtype == 'object':
+                        df[col] = df[col].astype(str)
+                    
+                    # Ensure numeric columns are properly typed
+                    elif df[col].dtype in ['int64', 'float64']:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+            else:
+                df = pd.DataFrame(columns=columns)
+            
+            return df
+        except Exception as e:
+            st.error(f"SQLite Error: {str(e)}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
 
 
 # Convenience functions for backward compatibility

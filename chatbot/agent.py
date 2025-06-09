@@ -5,6 +5,7 @@ from langchain_experimental.agents import create_pandas_dataframe_agent
 from langchain_ollama import OllamaLLM
 import io
 import base64
+import os
 
 
 def plot_to_base64(fig):
@@ -18,55 +19,121 @@ def create_agent_for_dataframe_sheets(sheets_dfs: dict, question: Optional[str] 
     combined_df = None
     for sheet, df,_ in sheets_dfs:
         df = df.copy()
+        # Add sheet_name first before any column filtering
         df["sheet_name"] = sheet
+        
+        # Only keep necessary columns to reduce memory usage
+        if question:
+            relevant_cols = [col for col in df.columns if any(term in question.lower() for term in col.lower().split('_'))]
+            if relevant_cols and 'sheet_name' not in relevant_cols:
+                relevant_cols.append('sheet_name')  # Ensure sheet_name is included
+            if relevant_cols:
+                df = df[relevant_cols]
+        
         combined_df = pd.concat([combined_df, df], ignore_index=True) if combined_df is not None else df
 
-    llm = OllamaLLM(model="llama3:8b")
+    # Optimize DataFrame memory usage
+    for col in combined_df.columns:
+        if combined_df[col].dtype == 'object':
+            if combined_df[col].nunique() / len(combined_df) < 0.5:  # If less than 50% unique values
+                combined_df[col] = combined_df[col].astype('category')
+
+    llm = OllamaLLM(
+        model="mistral:7b",
+        temperature=0.1,
+        top_k=5,  # Reduced for faster responses
+        top_p=0.3,  # Reduced for more focused responses
+        num_ctx=512,  # Reduced context window
+        repeat_penalty=1.1,
+        num_thread=4,  # Use multiple threads
+        format="json"
+    )
+    
+    # Create the agent with optimized configuration
     agent = create_pandas_dataframe_agent(
         llm=llm,
         df=combined_df,
-        verbose=False,
+        verbose=True,
+        handle_parsing_errors=True,
+        max_iterations=1,  # Single iteration for faster responses
+        max_execution_time=30,  # Set maximum execution time
+        allow_python_repl=True,
         allow_dangerous_code=True
     )
 
     if question:
-        response = agent.invoke({"input": f"Only return the final answer. Do not explain. {question}"})
-        output = response.get("output", "No output found")
+        try:
+            # Optimize the prompt for faster processing
+            structured_prompt = (
+                "Be concise. "
+                "Use only necessary calculations. "
+                "Question: " + question
+            )
+            
+            response = agent.invoke(
+                {"input": structured_prompt},
+                handle_parsing_errors=True,
+                config={"max_tokens": 500}  # Limit response length
+            )
+            
+            output = response.get("output", "No output found")
+            
+            # Clean up the output
+            if isinstance(output, str):
+                output = output.replace('```', '').replace('`', '').strip()
 
-        # Try generating plot if requested
-        if any(x in question.lower() for x in ["plot", "chart", "graph", "visualize"]):
-            try:
-                # You can customize this based on your domain
-                fig, ax = plt.subplots()
-                combined_df.plot(ax=ax)  # Customize this depending on the user query
-                plot_base64 = plot_to_base64(fig)
-                return {
-                    "output": output,
-                    "plot_base64": plot_base64
-                }
-            except Exception as e:
-                return {
-                    "output": output,
-                    "plot_error": str(e)
-                }
+            # Only generate plots if explicitly requested
+            if any(x in question.lower() for x in ["plot", "chart", "graph", "visualize"]):
+                try:
+                    fig, ax = plt.subplots(figsize=(8, 4))  # Smaller figure size
+                    combined_df.plot(ax=ax)
+                    plot_base64 = plot_to_base64(fig)
+                    plt.close(fig)  # Clean up memory
+                    return {
+                        "output": output,
+                        "plot_base64": plot_base64
+                    }
+                except Exception as e:
+                    return {
+                        "output": output,
+                        "plot_error": str(e)
+                    }
 
-        return output
+            return output
+        except Exception as e:
+            error_msg = str(e)
+            if "parsing" in error_msg.lower():
+                if "Could not parse LLM output:" in error_msg:
+                    start_idx = error_msg.find("Could not parse LLM output:") + len("Could not parse LLM output:")
+                    end_idx = error_msg.find("For troubleshooting")
+                    if end_idx == -1:
+                        end_idx = None
+                    actual_response = error_msg[start_idx:end_idx].strip()
+                    return actual_response
+            return f"Error processing your request: {error_msg}. Please try rephrasing your question."
 
     return agent
 
 
-def rephrase_prompts(prompts: list[str], max_prompts: int = 10) -> list[str]:
+def rephrase_prompts(prompts: list[str], max_prompts: int = 10, openai_api_key: Optional[str] = None) -> list[str]:
+    if not openai_api_key and not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OpenAI API key must be provided either as a parameter or through OPENAI_API_KEY environment variable")
+        
     conversational_prompts = []
-    llm = OllamaLLM(model="llama3:8b")
+    llm = OllamaLLM(
+        model="mistral:7b",
+        temperature=0.1,
+        top_k=5,  # Reduced for faster responses
+        num_ctx=256,  # Smaller context for rephrasing
+        num_thread=4,  # Use multiple threads
+        format="json"
+    )
 
     for prompt in prompts[:max_prompts]:
-        llm_input = (
-           f"Rephrase the following analytical question to be more natural and conversational for a user interface. "
-            f"Keep it friendly and precise:\n\n"
-            f"{prompt}"
-        )
+        llm_input = f"Rephrase briefly: {prompt}"
         try:
             refined = llm(llm_input).strip()
+            refined = refined.replace('```', '').replace('`', '').strip()
             conversational_prompts.append(refined)
         except Exception as e:
             conversational_prompts.append(prompt)  # fallback
