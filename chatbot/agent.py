@@ -115,27 +115,44 @@ def create_agent_for_dataframe_sheets(sheets_dfs: dict, question: Optional[str] 
     return agent
 
 
-def rephrase_prompts(prompts: list[str], max_prompts: int = 10, openai_api_key: Optional[str] = None) -> list[str]:
-    if not openai_api_key and not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OpenAI API key must be provided either as a parameter or through OPENAI_API_KEY environment variable")
-        
+def rephrase_prompts(prompts: list[str], max_prompts: int = 10) -> list[str]:
+    """
+    Rephrase the given prompts using Ollama LLM
+    """
     conversational_prompts = []
     llm = OllamaLLM(
         model="mistral:7b",
         temperature=0.1,
-        top_k=5,  # Reduced for faster responses
-        num_ctx=256,  # Smaller context for rephrasing
-        num_thread=4,  # Use multiple threads
+        top_k=5,
+        top_p=0.3,
+        num_ctx=512,
+        repeat_penalty=1.1,
+        num_thread=4,
         format="json"
     )
 
     for prompt in prompts[:max_prompts]:
-        llm_input = f"Rephrase briefly: {prompt}"
         try:
+            llm_input = (
+                "Rephrase the following question to make it more conversational and clear. "
+                "Keep it concise and natural: " + prompt
+            )
             refined = llm(llm_input).strip()
+            # Clean up any JSON or code formatting
             refined = refined.replace('```', '').replace('`', '').strip()
+            if refined.startswith('{') or refined.startswith('['):
+                try:
+                    import ast
+                    evaluated = ast.literal_eval(refined)
+                    if isinstance(evaluated, dict) and 'response' in evaluated:
+                        refined = evaluated['response']
+                    elif isinstance(evaluated, str):
+                        refined = evaluated
+                except:
+                    pass
             conversational_prompts.append(refined)
         except Exception as e:
-            conversational_prompts.append(prompt)  # fallback
+            print(f"Error rephrasing prompt: {str(e)}")
+            conversational_prompts.append(prompt)  # fallback to original prompt
 
     return conversational_prompts
